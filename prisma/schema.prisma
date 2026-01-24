@@ -1,0 +1,212 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// 1. Usuarios
+model Usuario {
+  id                  Int       @id @default(autoincrement())
+  cedula              String    @unique @db.VarChar(15)
+  nombres             String    @db.VarChar(191)
+  apellidos           String    @db.VarChar(191)
+  correoInstitucional String    @unique @map("correo_institucional") @db.VarChar(191)
+  clave               String    @db.VarChar(191)
+  rol                 Rol       @default(ESTUDIANTE)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  propuestas          Propuesta[]
+
+
+  
+  // Revisando SQL: 
+  // Actividades tienen FK usuarios_id -> El docente que crea la actividad? O el estudiante asignado?
+  // En SQL: Actividades.usuarios_id -> usuarios.id.
+  // Evidencia -> Actividades_id.
+  // Comentarios -> usuarios_id (Quien comenta).
+  
+  actividadesCreadas  Actividad[] @relation("UsuarioActividad")
+  comentarios         Comentario[]
+  notificaciones      Notificacion[]
+  comiteAsignaciones  Comite[]
+  prerequisitos       Prerequisito[]
+
+  @@map("usuarios")
+}
+
+enum Rol {
+  ESTUDIANTE
+  TUTOR
+  DIRECTOR
+  COORDINADOR
+  COMITE
+  DOCENTE_INTEGRACION
+}
+
+// 2. Propuestas
+model Propuesta {
+  id                  Int       @id @default(autoincrement())
+  titulo              String    @db.VarChar(191)
+  objetivos           String    @db.Text
+  problematica        String?   @db.Text
+  areaInvestigacion   AreaInvestigacion @map("area_investigacion")
+  alcance             String?   @db.VarChar(191)
+  archivoUrl          String?   @map("archivo_url") @db.VarChar(191)
+  fechaPublicacion    DateTime  @default(now()) @map("fecha_publicacion")
+  estado              EstadoPropuesta @default(PENDIENTE)
+  fkEstudiante        Int       @map("fk_estudiante")
+  aprobado            Int?      @db.TinyInt // TINYINT en SQL
+  
+  estudiante          Usuario   @relation(fields: [fkEstudiante], references: [id])
+  actividades         Actividad[]
+  comiteAsignaciones  Comite[]
+  entregablesFinales  EntregableFinal[]
+
+  @@map("propuestas")
+}
+
+enum AreaInvestigacion {
+  INTELIGENCIA_ARTIFICIAL
+  CIBERSEGURIDAD
+  DESARROLLO_SOFTWARE
+  CONTROL_CALIDAD
+}
+
+enum EstadoPropuesta {
+  PENDIENTE
+  APROBADA
+  APROBADA_CON_COMENTARIOS
+  RECHAZADA
+}
+
+// 3. Actividades
+model Actividad {
+  idActividades       Int       @id @default(autoincrement())
+  nombre              String?   @db.VarChar(45)
+  descripcion         String?   @db.VarChar(45)
+  propuestasId        Int       @map("propuestas_id")
+  usuariosId          Int       @map("usuarios_id")
+
+  propuesta           Propuesta @relation(fields: [propuestasId], references: [id])
+  usuario             Usuario   @relation("UsuarioActividad", fields: [usuariosId], references: [id])
+  evidencias          Evidencia[]
+
+  @@map("Actividades")
+}
+
+// 4. Evidencia (Avances)
+model Evidencia {
+  id                  Int       @id @default(autoincrement())
+  semana              Int
+  contenido           String    @db.Text
+  archivoUrl          String?   @map("archivo_url") @db.VarChar(191)
+  fechaEntrega        DateTime  @default(now()) @map("fecha_entrega")
+  estado              EstadoEvidencia @default(ENTREGADO)
+  calificacion        Decimal?  @db.Decimal(4,2)
+  actividadesId       Int       @map("Actividades_idActividades")
+
+  actividad           Actividad @relation(fields: [actividadesId], references: [idActividades])
+  comentarios         Comentario[]
+
+  @@map("Evidencia")
+}
+
+enum EstadoEvidencia {
+  ENTREGADO
+  NO_ENTREGADO
+}
+
+// 5. Comentarios
+model Comentario {
+  idComentarios       Int       @id @default(autoincrement())
+  descripcion         String?   @map("descripsion") @db.VarChar(45) // Typo en SQL original 'descripsion' mantenido o corregido? Corrijamos a descripcion si posible, pero map 'descripsion'.
+  evidenciaId         Int       @map("Evidencia_id")
+  usuariosId          Int       @map("usuarios_id")
+
+  evidencia           Evidencia @relation(fields: [evidenciaId], references: [id])
+  usuario             Usuario   @relation(fields: [usuariosId], references: [id])
+
+  @@map("Comentarios")
+}
+
+// 6. Prerequisitos (Estaba en SQL original, parece que falta en reporte v2 pero estaba en v1)
+model Prerequisito {
+  id          Int     @id @default(autoincrement())
+  nombre      String  @db.VarChar(191)
+  descripcion String? @db.VarChar(191)
+  cumplido    Boolean @default(false)
+  archivoUrl  String? @map("archivo_url") @db.VarChar(191)
+  fkEstudiante Int    @map("fk_estudiante")
+
+  estudiante   Usuario @relation(fields: [fkEstudiante], references: [id])
+  
+  @@map("prerequisitos")
+}
+
+// 7. Notificaciones (Nuevo)
+model Notificacion {
+  id            Int      @id @default(autoincrement())
+  mensaje       String   @db.Text
+  leido         Boolean  @default(false)
+  fechaCreacion DateTime @default(now()) @map("fecha_creacion")
+  usuariosId    Int      @map("usuarios_id")
+
+  usuario       Usuario  @relation(fields: [usuariosId], references: [id])
+
+  @@map("notificaciones")
+}
+
+// 8. Entregables Finales (Nuevo)
+model EntregableFinal {
+  id           Int      @id @default(autoincrement())
+  tipo         TipoEntregable
+  urlArchivo   String   @map("url_archivo") @db.VarChar(255)
+  fechaSubida  DateTime @default(now()) @map("fecha_subida")
+  propuestasId Int      @map("propuestas_id")
+
+  propuesta    Propuesta @relation(fields: [propuestasId], references: [id])
+
+  @@map("entregables_finales")
+}
+
+enum TipoEntregable {
+  TESIS
+  MANUAL_USUARIO
+  REPOSITORIO
+  ARTICULO
+}
+
+// 9. Comite (Corregido)
+model Comite {
+  usuariosId     Int      @map("usuarios_id")
+  propuestasId   Int      @map("propuestas_id")
+  rol            RolComite
+  calificacion   Decimal? @db.Decimal(4,2)
+  fechaAsignada  DateTime? @db.Date @map("fecha_asignada")
+  fechaDefensa   DateTime? @map("fecha_defensa")
+  resultadoDefensa ResultadoDefensa? @default(PENDIENTE) @map("resultado_defensa")
+
+  usuario        Usuario   @relation(fields: [usuariosId], references: [id])
+  propuesta      Propuesta @relation(fields: [propuestasId], references: [id])
+
+  @@id([usuariosId, propuestasId])
+  @@map("comite")
+}
+
+enum RolComite {
+  JURADO_1   @map("Jurado 1")
+  JURADO_2   @map("Jurado 2")
+  PRESIDENTE @map("Presidente")
+}
+
+enum ResultadoDefensa {
+  APROBADO
+  REPROBADO
+  PENDIENTE
+}
+
+// Dummy model to ignore errors on EvidenciaReview if needed, removed.
