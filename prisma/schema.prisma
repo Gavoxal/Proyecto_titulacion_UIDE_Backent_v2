@@ -319,9 +319,12 @@ model McpAuth {
   id        Int      @id @default(autoincrement())
   email     String   @db.VarChar(191)
   codigo    String   @db.VarChar(6)
-  token     String?  @db.VarChar(255)
-  expiresAt DateTime @map("expires_at") @db.DateTime(3)
+  token     String?  @db.VarChar(64)
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  expiresAt DateTime @map("expires_at") @db.DateTime(3)
 
+  @@index([email], map: "mcp_auth_email_idx")
+  @@index([token], map: "mcp_auth_token_idx")
   @@map("mcp_auth")
 }
+
