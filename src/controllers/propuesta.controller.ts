@@ -11,18 +11,48 @@ const __dirname = path.dirname(__filename);
 
 export const createPropuesta = async (request: FastifyRequest, reply: FastifyReply) => {
     const prisma = request.server.prisma;
+    // Modificación para soportar multipart/form-data
+    let fields: any = {};
+    let uploadedFileUrl: string | null = null;
+    let usuario: any = request.user; // Default from JWT
+
+    // Verificar si es multipart
+    if (request.isMultipart()) {
+        const parts = request.parts();
+        for await (const part of parts) {
+            if (part.type === 'file') {
+                // Guardar archivo
+                const uploadDir = path.join(__dirname, '../../uploads/propuestas');
+                if (!fs.existsSync(uploadDir)) {
+                    fs.mkdirSync(uploadDir, { recursive: true });
+                }
+                const filename = `${Date.now()}-${part.filename.replace(/\s/g, '_')}`;
+                const filepath = path.join(uploadDir, filename);
+                await pump(part.file, fs.createWriteStream(filepath));
+                uploadedFileUrl = `/api/v1/propuestas/file/${filename}`;
+            } else {
+                // Guardar campo
+                fields[part.fieldname] = part.value;
+            }
+        }
+    } else {
+        // Fallback JSON (si se enviara como JSON puro)
+        fields = request.body;
+    }
+
     const {
         titulo,
         objetivos,
         areaConocimientoId,
-        archivoUrl,
         problematica,
         alcance,
         carrera,
         malla
-    } = request.body as any;
+    } = fields;
 
-    const usuario = request.user as any; // From JWT
+    // Priorizar archivo subido, sino usar URL enviada
+    const archivoUrl = uploadedFileUrl || fields.archivoUrl;
+
 
     try {
         // 1. Validar Prerrequisitos - Usar nueva estructura
@@ -54,6 +84,7 @@ export const createPropuesta = async (request: FastifyRequest, reply: FastifyRep
             });
         }
 
+
         const nuevaPropuesta = await prisma.propuesta.create({
             data: {
                 titulo,
@@ -72,9 +103,48 @@ export const createPropuesta = async (request: FastifyRequest, reply: FastifyRep
                 areaConocimiento: true
             }
         });
+
+        // NOTIFICACIÓN: Verificar si completó las 3 propuestas
+        const finalCount = await prisma.propuesta.count({
+            where: { fkEstudiante: usuario.id }
+        });
+
+        if (finalCount === 3) {
+            // Buscar Directores y Coordinadores
+            const autoridades = await prisma.usuario.findMany({
+                where: {
+                    rol: { in: ['DIRECTOR', 'COORDINADOR'] }
+                }
+            });
+
+            // Crear notificaciones en BD
+            const notificacionesData = autoridades.map(auth => ({
+                usuarioId: auth.id,
+                mensaje: `El estudiante ${usuario.nombres} ${usuario.apellidos} ha completado el envío de sus 3 propuestas de titulación.`,
+                leido: false
+            }));
+
+            if (notificacionesData.length > 0) {
+                await prisma.notificacion.createMany({
+                    data: notificacionesData
+                });
+            }
+
+            // Enviar correos a autoridades
+            // Import dinámico si es necesario o asumir que ya está importado arriba (lo añadiré)
+            const { sendProposalsCompletedEmail } = await import('../services/email.service.js');
+
+            for (const auth of autoridades) {
+                if (auth.correoInstitucional) {
+                    await sendProposalsCompletedEmail(auth.correoInstitucional, `${auth.nombres} ${auth.apellidos}`, `${usuario.nombres} ${usuario.apellidos}`);
+                }
+            }
+        }
+
         return reply.code(201).send(nuevaPropuesta);
     } catch (error) {
         request.log.error(error);
+        console.error("Error creating proposal:", error);
         return reply.code(500).send({ message: 'Error creando propuesta' });
     }
 };
@@ -98,20 +168,72 @@ export const getPropuestas = async (request: FastifyRequest, reply: FastifyReply
             };
         }
 
+        // Permitir filtrar por estudianteId si es DIRECTOR o COORDINADOR
+        const { estudianteId } = request.query as any;
+        if (estudianteId && ['DIRECTOR', 'COORDINADOR'].includes(usuario.rol)) {
+            const eid = Number(estudianteId);
+            if (!isNaN(eid)) {
+                // Verificar si hay propuestas con este fkEstudiante
+                const studentProps = await prisma.propuesta.findMany({
+                    where: { fkEstudiante: eid },
+                    select: { id: true }
+                });
+
+                if (studentProps.length > 0) {
+                    where.fkEstudiante = eid;
+                } else {
+                    // Fallback: ¿Es el ID de una propuesta individual?
+                    const singleProp = await prisma.propuesta.findUnique({
+                        where: { id: eid },
+                        select: { fkEstudiante: true }
+                    });
+                    if (singleProp) {
+                        where.fkEstudiante = singleProp.fkEstudiante;
+                    } else {
+                        where.fkEstudiante = eid;
+                    }
+                }
+            } else if (estudianteId === 'undefined') {
+                // Manejar error común de frontend
+                return reply.code(400).send({ message: 'ID de estudiante inválido (undefined)' });
+            }
+        }
+
+        console.log(`[DEBUG] getPropuestas WHERE clause:`, JSON.stringify(where));
+
         const propuestas = await prisma.propuesta.findMany({
             where,
             include: {
                 estudiante: {
-                    select: { nombres: true, apellidos: true, cedula: true }
+                    include: {
+                        estudiantePerfil: true
+                    }
                 },
                 areaConocimiento: true,
+                votacionesTutor: {
+                    include: {
+                        tutor: {
+                            select: { nombres: true, apellidos: true }
+                        }
+                    }
+                },
+                comentarios: {
+                    include: {
+                        usuario: {
+                            select: { nombres: true, apellidos: true, rol: true }
+                        }
+                    },
+                    orderBy: { id: 'asc' }
+                },
                 trabajosTitulacion: {
+                    where: { estadoAsignacion: 'ACTIVO' },
                     include: {
                         tutor: {
                             select: { nombres: true, apellidos: true, correoInstitucional: true }
                         }
                     }
-                }
+                },
+                entregablesFinales: true
             }
         });
         console.log(`[DEBUG] Propuestas found: ${propuestas.length}`);
@@ -151,9 +273,7 @@ export const getPropuestaById = async (request: FastifyRequest, reply: FastifyRe
                 },
                 trabajosTitulacion: {
                     include: {
-                        tutor: {
-                            select: { nombres: true, apellidos: true, correoInstitucional: true }
-                        }
+                        tutor: true
                     }
                 }
             }
@@ -294,6 +414,35 @@ export const revisarPropuesta = async (request: FastifyRequest, reply: FastifyRe
                 fechaRevision: new Date()
             }
         });
+
+        // NOTIFICACIÓN: Si se aprueba, notificar al estudiante
+        if (estadoRevision === 'APROBADA') {
+            try {
+                await prisma.notificacion.create({
+                    data: {
+                        usuarioId: propuestaActualizada.fkEstudiante,
+                        mensaje: `Tu propuesta "${propuestaActualizada.titulo}" ha sido aprobada.`,
+                        leido: false
+                    }
+                });
+            } catch (notifErr) {
+                request.log.error(`Error creando notificación: ${notifErr}`);
+                // No bloqueamos la respuesta principal por error en notificación
+            }
+        } else if (estadoRevision === 'RECHAZADA' || estadoRevision === 'APROBADA_CON_COMENTARIOS') {
+            try {
+                const tipo = estadoRevision === 'RECHAZADA' ? 'rechazada' : 'observada';
+                await prisma.notificacion.create({
+                    data: {
+                        usuarioId: propuestaActualizada.fkEstudiante,
+                        mensaje: `Tu propuesta "${propuestaActualizada.titulo}" ha sido ${tipo}. Por favor revisa los comentarios.`,
+                        leido: false
+                    }
+                });
+            } catch (notifErr) {
+                request.log.error(`Error creando notificación: ${notifErr}`);
+            }
+        }
 
         return propuestaActualizada;
     } catch (error) {

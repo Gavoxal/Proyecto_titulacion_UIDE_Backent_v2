@@ -82,6 +82,15 @@ export const createTrabajoTitulacion = async (request: FastifyRequest, reply: Fa
             }
         });
 
+        // Crear notificación para el estudiante
+        await prisma.notificacion.create({
+            data: {
+                usuarioId: propuesta.fkEstudiante,
+                mensaje: `Se ha asignado al tutor ${tutor.nombres} ${tutor.apellidos} para tu propuesta de titulación: "${propuesta.titulo}".`,
+                leido: false
+            }
+        });
+
         return reply.code(201).send(trabajoTitulacion);
     } catch (error: any) {
         request.log.error(error);

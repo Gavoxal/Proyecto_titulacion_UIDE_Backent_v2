@@ -1,5 +1,8 @@
 import bcrypt from 'bcrypt';
 import { FastifyReply, FastifyRequest } from 'fastify';
+import { sendCredentialsEmail } from '../services/email.service';
+import * as fs from 'fs';
+import * as path from 'path';
 
 
 export const getUsuarios = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -24,6 +27,8 @@ export const getUsuarios = async (request: FastifyRequest, reply: FastifyReply) 
                 apellidos: true,
                 correoInstitucional: true,
                 rol: true,
+                // @ts-ignore
+                designacion: true,
                 createdAt: true,
                 estudiantePerfil: true
             }
@@ -48,6 +53,8 @@ export const getUsuarioById = async (request: FastifyRequest, reply: FastifyRepl
                 apellidos: true,
                 correoInstitucional: true,
                 rol: true,
+                // @ts-ignore
+                designacion: true,
                 createdAt: true
             }
         });
@@ -64,7 +71,7 @@ export const getUsuarioById = async (request: FastifyRequest, reply: FastifyRepl
 export const createUsuario = async (request: FastifyRequest, reply: FastifyReply) => {
     // @ts-ignore
     const prisma = request.server.prisma;
-    const { cedula, nombres, apellidos, correo, clave, rol } = request.body as any;
+    const { cedula, nombres, apellidos, correo, clave, rol, designacion } = request.body as any;
 
     try {
         const hashedPassword = await bcrypt.hash(clave, 10);
@@ -76,7 +83,9 @@ export const createUsuario = async (request: FastifyRequest, reply: FastifyReply
                     nombres,
                     apellidos,
                     correoInstitucional: correo,
-                    rol: rol || 'ESTUDIANTE'
+                    rol: rol || 'ESTUDIANTE',
+                    // @ts-ignore
+                    designacion
                 }
             });
 
@@ -91,11 +100,23 @@ export const createUsuario = async (request: FastifyRequest, reply: FastifyReply
             return nuevoUsuario;
         });
 
+        // Enviar correo de credenciales (sin esperar a que bloquee la respuesta)
+        sendCredentialsEmail(correo, `${nombres} ${apellidos}`, clave).catch((err: any) => {
+            request.log.error(`Error enviando correo a ${correo}: ${err.message}`);
+        });
+
         return reply.code(201).send(result);
     } catch (error) {
         request.log.error(error);
         if ((error as any).code === 'P2002') {
-            return reply.code(400).send({ message: 'Cédula o Correo ya registrado' });
+            const target = (error as any).meta?.target || '';
+            if (target.includes('correo')) {
+                return reply.code(400).send({ message: 'El Correo Institucional ya está registrado.' });
+            }
+            if (target.includes('cedula')) {
+                return reply.code(400).send({ message: 'La Cédula ya está registrada.' });
+            }
+            return reply.code(400).send({ message: 'Cédula o Correo ya registrado.' });
         }
         return reply.code(500).send({ message: 'Error creando usuario' });
     }
@@ -158,8 +179,16 @@ export const deleteUsuario = async (request: FastifyRequest, reply: FastifyReply
  * Carga masiva de usuarios
  * POST /api/v1/usuarios/bulk
  */
-import * as fs from 'fs';
-import * as path from 'path';
+
+// Helper para generar contraseña aleatoria
+function generateRandomPassword(length = 10) {
+    const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%";
+    let password = "";
+    for (let i = 0, n = charset.length; i < length; ++i) {
+        password += charset.charAt(Math.floor(Math.random() * n));
+    }
+    return password;
+}
 
 export const bulkCreateUsuarios = async (request: FastifyRequest, reply: FastifyReply) => {
     // @ts-ignore
@@ -170,29 +199,16 @@ export const bulkCreateUsuarios = async (request: FastifyRequest, reply: Fastify
         return reply.code(400).send({ message: 'Formato inválido. Se espera un array "usuarios".' });
     }
 
-    // DEBUG: Write payload to file
-    try {
-        const debugPath = path.join(__dirname, '../../debug_payload.json');
-        console.log('Writing debug payload to:', debugPath);
-        fs.writeFileSync(debugPath, JSON.stringify(usuarios, null, 2));
-    } catch (e) {
-        console.error('Failed to write debug payload', e);
-    }
-
     console.log('📦 Bulk Upload Recibido. Cantidad:', usuarios.length);
-    if (usuarios.length > 0) {
-        // Safe logging of first user
-        const sample = { ...usuarios[0] };
-        if (sample.clave) sample.clave = '***'; // Hide password
-        console.log('🔎 Primer usuario sample:', JSON.stringify(sample, null, 2));
-    }
 
     const resultados = {
         exitosos: [] as any[],
+        omitidos: [] as any[], // Duplicados
         fallidos: [] as any[],
         total: usuarios.length,
         detalles: {
             exitosos: [] as any[],
+            omitidos: [] as any[],
             fallidos: [] as any[]
         }
     };
@@ -200,10 +216,11 @@ export const bulkCreateUsuarios = async (request: FastifyRequest, reply: Fastify
     try {
         for (const usuarioData of usuarios) {
             try {
-                const { cedula, nombres, apellidos, correo, clave, rol, perfil } = usuarioData;
+                const { cedula, nombres, apellidos, correo, rol, perfil } = usuarioData;
 
                 // Validar campos requeridos
-                if (!cedula || !nombres || !apellidos || !correo || !clave) {
+                if (!cedula || !nombres || !apellidos || !correo) {
+                    console.log(`[BULK] Faltan campos para Cédula: ${cedula}, Correo: ${correo}`);
                     resultados.fallidos.push(cedula || 'desconocido');
                     resultados.detalles.fallidos.push({
                         cedula: cedula || 'desconocido',
@@ -212,31 +229,38 @@ export const bulkCreateUsuarios = async (request: FastifyRequest, reply: Fastify
                     continue;
                 }
 
+                console.log(`[BULK] Procesando: ${cedula} - ${correo}`);
+
                 // Verificar si ya existe
                 const existente = await prisma.usuario.findFirst({
                     where: {
                         OR: [
-                            { cedula },
-                            { correoInstitucional: correo }
+                            { cedula: String(cedula) }, // Ensure string
+                            { correoInstitucional: String(correo) }
                         ]
                     }
                 });
 
                 if (existente) {
-                    resultados.fallidos.push(cedula);
-                    resultados.detalles.fallidos.push({
+                    console.log(`[BULK] USUARIO EXISTE (ID: ${existente.id}). Omitiendo...`);
+                    resultados.omitidos.push(cedula);
+                    resultados.detalles.omitidos.push({
                         cedula,
-                        error: 'Cédula o correo ya registrado'
+                        nombre: `${nombres} ${apellidos}`,
+                        motivo: 'Ya registrado'
                     });
                     continue;
+                } else {
+                    console.log(`[BULK] Usuario NO encontrado. Creando...`);
                 }
 
-                // Crear usuario con perfil y auth
-                const hashedPassword = await bcrypt.hash(clave, 10);
+                // Generar contraseña aleatoria si no viene (o forzarla siempre)
+                const rawPassword = generateRandomPassword();
+                const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
                 // Preparar datos de creación
                 const createData: any = {
-                    cedula,
+                    cedula: String(cedula),
                     nombres,
                     apellidos,
                     correoInstitucional: correo,
@@ -279,10 +303,20 @@ export const bulkCreateUsuarios = async (request: FastifyRequest, reply: Fastify
                     }
                 });
 
+                console.log(`[BULK] Usuario Creado: ${nuevoUsuario.id}`);
                 resultados.exitosos.push(cedula);
                 resultados.detalles.exitosos.push(nuevoUsuario);
 
+                // Enviar correo con la contraseña generada
+                try {
+                    console.log(`[BULK] Enviando correo a ${correo}...`);
+                    await sendCredentialsEmail(correo, `${nombres} ${apellidos}`, rawPassword);
+                } catch (emailError) {
+                    console.error(`Error enviando correo a ${correo}`, emailError);
+                }
+
             } catch (error: any) {
+                console.error(`[BULK] Error procesando ${usuarioData.cedula}:`, error);
                 resultados.fallidos.push(usuarioData.cedula || 'desconocido');
                 resultados.detalles.fallidos.push({
                     cedula: usuarioData.cedula || 'desconocido',
@@ -291,6 +325,7 @@ export const bulkCreateUsuarios = async (request: FastifyRequest, reply: Fastify
             }
         }
 
+        console.log(`✅ Carga finalizada: ${resultados.exitosos.length} creados, ${resultados.omitidos.length} omitidos, ${resultados.fallidos.length} fallidos`);
         return reply.code(200).send(resultados);
 
     } catch (error: any) {

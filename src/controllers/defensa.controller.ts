@@ -1,4 +1,5 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
+import { sendDefenseNotificationEmail } from '../services/email.service';
 
 /**
  * DEFENSAS (PRIVADA Y PÚBLICA)
@@ -64,12 +65,26 @@ export const createDefensaPrivada = async (request: FastifyRequest, reply: Fasti
                         id: true,
                         titulo: true,
                         estudiante: {
-                            select: { id: true, nombres: true, apellidos: true }
+                            select: { id: true, nombres: true, apellidos: true, correoInstitucional: true }
                         }
                     }
                 }
             }
         });
+
+        // Notificar al estudiante (sin esperar a que bloquee la respuesta)
+        if (fechaDefensa && (defensa.propuesta.estudiante as any).correoInstitucional) {
+            sendDefenseNotificationEmail({
+                to: (defensa.propuesta.estudiante as any).correoInstitucional,
+                nombre: `${defensa.propuesta.estudiante.nombres} ${defensa.propuesta.estudiante.apellidos}`,
+                rol: 'ESTUDIANTE',
+                tema: defensa.propuesta.titulo,
+                fecha: new Date(fechaDefensa).toISOString().split('T')[0],
+                hora: horaDefensa,
+                aula: aula || 'Por asignar',
+                tipo: 'Privada'
+            }).catch((err: any) => request.log.error(`Error enviando correo a estudiante: ${err.message}`));
+        }
 
         return reply.code(201).send(defensa);
     } catch (error) {
@@ -147,7 +162,10 @@ export const updateDefensaPrivada = async (request: FastifyRequest, reply: Fasti
         }
 
         const updateData: any = {};
-        if (data.fechaDefensa) updateData.fechaDefensa = new Date(data.fechaDefensa);
+        if (data.fechaDefensa) {
+            updateData.fechaDefensa = new Date(data.fechaDefensa);
+            if (!data.estado) updateData.estado = 'PROGRAMADA';
+        }
         if (data.horaDefensa) updateData.horaDefensa = new Date(`1970-01-01T${data.horaDefensa}`);
         if (data.aula) updateData.aula = data.aula;
         if (data.estado) updateData.estado = data.estado;
@@ -158,17 +176,49 @@ export const updateDefensaPrivada = async (request: FastifyRequest, reply: Fasti
             data: updateData,
             include: {
                 propuesta: {
-                    select: { id: true, titulo: true }
+                    select: { id: true, titulo: true, estudiante: { select: { nombres: true, apellidos: true, correoInstitucional: true } } }
                 },
                 participantes: {
                     include: {
                         usuario: {
-                            select: { id: true, nombres: true, apellidos: true }
+                            select: { id: true, nombres: true, apellidos: true, correoInstitucional: true }
                         }
                     }
                 }
             }
         });
+
+        // Notificar cambios (estudiante y participantes)
+        if (data.fechaDefensa || data.horaDefensa || data.aula) {
+            if ((defensa.propuesta.estudiante as any).correoInstitucional) {
+                sendDefenseNotificationEmail({
+                    to: (defensa.propuesta.estudiante as any).correoInstitucional,
+                    nombre: `${defensa.propuesta.estudiante.nombres} ${defensa.propuesta.estudiante.apellidos}`,
+                    rol: 'ESTUDIANTE',
+                    tema: defensa.propuesta.titulo,
+                    fecha: defensa.fechaDefensa?.toISOString().split('T')[0] || '--',
+                    hora: defensa.horaDefensa?.toLocaleTimeString() || '--',
+                    aula: defensa.aula || 'Por asignar',
+                    tipo: 'Privada'
+                }).catch((err: any) => request.log.error(`Error enviando correo a estudiante: ${err.message}`));
+            }
+
+            for (const p of defensa.participantes) {
+                if ((p.usuario as any).correoInstitucional) {
+                    sendDefenseNotificationEmail({
+                        to: (p.usuario as any).correoInstitucional,
+                        nombre: `${p.usuario.nombres} ${p.usuario.apellidos}`,
+                        rol: (p as any).rol || 'Miembro del Tribunal',
+                        estudianteNombre: `${defensa.propuesta.estudiante.nombres} ${defensa.propuesta.estudiante.apellidos}`,
+                        tema: defensa.propuesta.titulo,
+                        fecha: defensa.fechaDefensa?.toISOString().split('T')[0] || '--',
+                        hora: defensa.horaDefensa?.toLocaleTimeString() || '--',
+                        aula: defensa.aula || 'Por asignar',
+                        tipo: 'Privada'
+                    }).catch((err: any) => request.log.error(`Error enviando correo a participante: ${err.message}`));
+                }
+            }
+        }
 
         return defensa;
     } catch (error) {
@@ -233,10 +283,36 @@ export const addParticipanteDefensaPrivada = async (request: FastifyRequest, rep
             },
             include: {
                 usuario: {
-                    select: { id: true, nombres: true, apellidos: true, rol: true }
+                    select: { id: true, nombres: true, apellidos: true, rol: true, correoInstitucional: true }
                 }
             }
         });
+
+        // Notificar al participante (sin esperar a que bloquee la respuesta)
+        const evaluacion = await prisma.evaluacionDefensaPrivada.findUnique({
+            where: { id: Number(evaluacionId) },
+            include: {
+                propuesta: {
+                    include: {
+                        estudiante: true
+                    }
+                }
+            }
+        });
+
+        if (evaluacion && evaluacion.fechaDefensa && (participante.usuario as any).correoInstitucional) {
+            sendDefenseNotificationEmail({
+                to: (participante.usuario as any).correoInstitucional,
+                nombre: `${participante.usuario.nombres} ${participante.usuario.apellidos}`,
+                rol: rol || 'Miembro del Tribunal',
+                estudianteNombre: `${evaluacion.propuesta.estudiante.nombres} ${evaluacion.propuesta.estudiante.apellidos}`,
+                tema: evaluacion.propuesta.titulo,
+                fecha: evaluacion.fechaDefensa.toISOString().split('T')[0],
+                hora: evaluacion.horaDefensa?.toLocaleTimeString() || '--:--',
+                aula: evaluacion.aula || 'Por asignar',
+                tipo: 'Privada'
+            }).catch((err: any) => request.log.error(`Error enviando correo a participante: ${err.message}`));
+        }
 
         return reply.code(201).send(participante);
     } catch (error) {
@@ -416,12 +492,26 @@ export const createDefensaPublica = async (request: FastifyRequest, reply: Fasti
                         id: true,
                         titulo: true,
                         estudiante: {
-                            select: { id: true, nombres: true, apellidos: true }
+                            select: { id: true, nombres: true, apellidos: true, correoInstitucional: true }
                         }
                     }
                 }
             }
         });
+
+        // Notificar al estudiante (sin esperar a que bloquee la respuesta)
+        if (fechaDefensa && (defensa.propuesta.estudiante as any).correoInstitucional) {
+            sendDefenseNotificationEmail({
+                to: (defensa.propuesta.estudiante as any).correoInstitucional,
+                nombre: `${defensa.propuesta.estudiante.nombres} ${defensa.propuesta.estudiante.apellidos}`,
+                rol: 'ESTUDIANTE',
+                tema: defensa.propuesta.titulo,
+                fecha: new Date(fechaDefensa).toISOString().split('T')[0],
+                hora: horaDefensa,
+                aula: aula || 'Por asignar',
+                tipo: 'Pública'
+            }).catch((err: any) => request.log.error(`Error enviando correo a estudiante: ${err.message}`));
+        }
 
         return reply.code(201).send(defensa);
     } catch (error) {
@@ -499,7 +589,10 @@ export const updateDefensaPublica = async (request: FastifyRequest, reply: Fasti
         }
 
         const updateData: any = {};
-        if (data.fechaDefensa) updateData.fechaDefensa = new Date(data.fechaDefensa);
+        if (data.fechaDefensa) {
+            updateData.fechaDefensa = new Date(data.fechaDefensa);
+            if (!data.estado) updateData.estado = 'PROGRAMADA';
+        }
         if (data.horaDefensa) updateData.horaDefensa = new Date(`1970-01-01T${data.horaDefensa}`);
         if (data.aula) updateData.aula = data.aula;
         if (data.estado) updateData.estado = data.estado;
@@ -510,17 +603,49 @@ export const updateDefensaPublica = async (request: FastifyRequest, reply: Fasti
             data: updateData,
             include: {
                 propuesta: {
-                    select: { id: true, titulo: true }
+                    select: { id: true, titulo: true, estudiante: { select: { nombres: true, apellidos: true, correoInstitucional: true } } }
                 },
                 participantes: {
                     include: {
                         usuario: {
-                            select: { id: true, nombres: true, apellidos: true }
+                            select: { id: true, nombres: true, apellidos: true, correoInstitucional: true }
                         }
                     }
                 }
             }
         });
+
+        // Notificar cambios (estudiante y participantes)
+        if (data.fechaDefensa || data.horaDefensa || data.aula) {
+            if ((defensa.propuesta.estudiante as any).correoInstitucional) {
+                sendDefenseNotificationEmail({
+                    to: (defensa.propuesta.estudiante as any).correoInstitucional,
+                    nombre: `${defensa.propuesta.estudiante.nombres} ${defensa.propuesta.estudiante.apellidos}`,
+                    rol: 'ESTUDIANTE',
+                    tema: defensa.propuesta.titulo,
+                    fecha: defensa.fechaDefensa?.toISOString().split('T')[0] || '--',
+                    hora: defensa.horaDefensa?.toLocaleTimeString() || '--',
+                    aula: defensa.aula || 'Por asignar',
+                    tipo: 'Pública'
+                }).catch((err: any) => request.log.error(`Error enviando correo a estudiante: ${err.message}`));
+            }
+
+            for (const p of defensa.participantes) {
+                if ((p.usuario as any).correoInstitucional) {
+                    sendDefenseNotificationEmail({
+                        to: (p.usuario as any).correoInstitucional,
+                        nombre: `${p.usuario.nombres} ${p.usuario.apellidos}`,
+                        rol: (p as any).rol || 'Miembro del Tribunal',
+                        estudianteNombre: `${defensa.propuesta.estudiante.nombres} ${defensa.propuesta.estudiante.apellidos}`,
+                        tema: defensa.propuesta.titulo,
+                        fecha: defensa.fechaDefensa?.toISOString().split('T')[0] || '--',
+                        hora: defensa.horaDefensa?.toLocaleTimeString() || '--',
+                        aula: defensa.aula || 'Por asignar',
+                        tipo: 'Pública'
+                    }).catch((err: any) => request.log.error(`Error enviando correo a participante: ${err.message}`));
+                }
+            }
+        }
 
         return defensa;
     } catch (error) {
@@ -585,10 +710,36 @@ export const addParticipanteDefensaPublica = async (request: FastifyRequest, rep
             },
             include: {
                 usuario: {
-                    select: { id: true, nombres: true, apellidos: true, rol: true }
+                    select: { id: true, nombres: true, apellidos: true, rol: true, correoInstitucional: true }
                 }
             }
         });
+
+        // Notificar al participante (sin esperar a que bloquee la respuesta)
+        const evaluacion = await prisma.evaluacionDefensaPublica.findUnique({
+            where: { id: Number(evaluacionId) },
+            include: {
+                propuesta: {
+                    include: {
+                        estudiante: true
+                    }
+                }
+            }
+        });
+
+        if (evaluacion && evaluacion.fechaDefensa && (participante.usuario as any).correoInstitucional) {
+            sendDefenseNotificationEmail({
+                to: (participante.usuario as any).correoInstitucional,
+                nombre: `${participante.usuario.nombres} ${participante.usuario.apellidos}`,
+                rol: rol || 'Miembro del Tribunal',
+                estudianteNombre: `${evaluacion.propuesta.estudiante.nombres} ${evaluacion.propuesta.estudiante.apellidos}`,
+                tema: evaluacion.propuesta.titulo,
+                fecha: evaluacion.fechaDefensa.toISOString().split('T')[0],
+                hora: evaluacion.horaDefensa?.toLocaleTimeString() || '--:--',
+                aula: evaluacion.aula || 'Por asignar',
+                tipo: 'Pública'
+            }).catch((err: any) => request.log.error(`Error enviando correo a participante: ${err.message}`));
+        }
 
         return reply.code(201).send(participante);
     } catch (error) {

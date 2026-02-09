@@ -20,6 +20,14 @@ const app = Fastify({
     logger: true
 });
 
+// Initialize Prisma
+const prisma = new PrismaClient();
+app.decorate('prisma', prisma);
+
+app.addHook('onClose', async (instance) => {
+    await instance.prisma.$disconnect();
+});
+
 // Plugins
 await app.register(cors);
 await app.register(multipart, {
@@ -102,6 +110,10 @@ await app.register((await import('./routes/bitacora/bitacora.routes.js')).defaul
 await app.register((await import('./routes/votacion/votacion.routes.js')).default, { prefix: '/api/v1/votacion' });
 // @ts-ignore
 await app.register((await import('./routes/defensas/defensa.routes.js')).default, { prefix: '/api/v1/defensas' });
+// @ts-ignore
+await app.register((await import('./routes/notificacion.routes.js')).default, { prefix: '/api/v1/notificaciones' });
+// @ts-ignore
+await app.register((await import('./routes/trabajos/trabajos.routes.js')).default, { prefix: '/api/v1/trabajos-titulacion' });
 
 
 
@@ -110,12 +122,8 @@ await app.register((await import('./routes/defensas/defensa.routes.js')).default
 
 
 
-const prisma = new PrismaClient();
-app.decorate('prisma', prisma);
 
-app.addHook('onClose', async (instance) => {
-    await instance.prisma.$disconnect();
-});
+
 
 // Basic Route
 app.get('/', async (request, reply) => {

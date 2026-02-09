@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import * as XLSX from 'xlsx';
 import bcrypt from 'bcrypt';
+import { sendCredentialsEmail } from '../../services/email.service.js';
 
 export const importarEstudiantes = async (request: FastifyRequest, reply: FastifyReply) => {
     // @ts-ignore
@@ -45,14 +46,26 @@ export const importarEstudiantes = async (request: FastifyRequest, reply: Fastif
     const headers = rawData[headerRowIndex].map((h: any) => String(h).trim());
     const rows = rawData.slice(headerRowIndex + 1);
 
-    const resultados = [];
-    const errores = [];
+    const resultados = {
+        creados: [] as any[],
+        omitidos: [] as any[],
+        errores: [] as any[]
+    };
+
+    // Helper para generar contraseña aleatoria
+    function generateRandomPassword(length = 10) {
+        const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%";
+        let password = "";
+        for (let i = 0, n = charset.length; i < length; ++i) {
+            password += charset.charAt(Math.floor(Math.random() * n));
+        }
+        return password;
+    }
 
     for (const rawRow of rows) {
         // Map row array to object using headers
         const row: any = {};
         headers.forEach((header: string, index: number) => {
-            // Handle duplicate headers or empty? Assume unique enough.
             row[header] = rawRow[index];
         });
 
@@ -64,78 +77,80 @@ export const importarEstudiantes = async (request: FastifyRequest, reply: Fastif
         const email = row['Email UIDE'];
 
         if (!cedula || !email) {
-            errores.push({ row, error: 'Falta Cédula o Email' });
+            resultados.errores.push({ row, error: 'Falta Cédula o Email' });
             continue;
         }
 
-        // Generate Credentials
-        const username = email.split('@')[0];
-        const plainPassword = 'estudiante123'; // Default password for testing
-        const hashedPassword = await bcrypt.hash(plainPassword, 10);
-
         try {
+            // Check if user exists BEFORE transaction to decide action
+            const existingUser = await prisma.usuario.findFirst({
+                where: {
+                    OR: [
+                        { cedula },
+                        { correoInstitucional: email }
+                    ]
+                }
+            });
+
+            if (existingUser) {
+                // If user exists, we might want to update profile, but for now we skip creation/email
+                // Logic: "no creo dublicados"
+                resultados.omitidos.push({
+                    cedula,
+                    email,
+                    motivo: 'Usuario ya registrado'
+                });
+
+                // Optional: Update profile if needed, but per request we treat as duplicate/skip
+                // Proceed to next row
+                continue;
+            }
+
+            // Generate Credentials only for NEW users
+            const plainPassword = generateRandomPassword();
+            const hashedPassword = await bcrypt.hash(plainPassword, 10);
+
             await prisma.$transaction(async (tx) => {
-                // 1. Create or Update Usuario
-                // Check if user exists
-                let usuario = await tx.usuario.findUnique({ where: { cedula } });
+                // Split nombreCompleto for basic compatibility
+                const nameParts = nombreCompleto ? nombreCompleto.split(' ') : ['Estudiante'];
+                let nombres = '';
+                let apellidos = '';
 
-                if (!usuario) {
-                    // Split nombreCompleto for basic compatibility
-                    const nameParts = nombreCompleto ? nombreCompleto.split(' ') : ['Estudiante'];
-                    let nombres = '';
-                    let apellidos = '';
-
-                    // Heuristic: Last 2 are names, Rest are surnames? Or First 2 surnames?
-                    // Usually in lists: "Abad Montesdeoca Nicole Belen" -> Apellidos: Abad Montesdeoca
-                    if (nameParts.length >= 3) {
-                        apellidos = nameParts.slice(0, 2).join(' ');
-                        nombres = nameParts.slice(2).join(' ');
-                    } else if (nameParts.length === 2) {
-                        apellidos = nameParts[0];
-                        nombres = nameParts[1];
-                    } else {
-                        apellidos = nameParts[0];
-                        nombres = 'Sin Nombre';
-                    }
-
-                    usuario = await tx.usuario.create({
-                        data: {
-                            cedula,
-                            nombres,
-                            apellidos,
-                            correoInstitucional: email,
-                            rol: 'ESTUDIANTE'
-                        }
-                    });
-
-                    // 2. Create Credentials in Auth
-                    // @ts-ignore
-                    await tx.auth.create({
-                        data: {
-                            username: email,
-                            password: hashedPassword,
-                            usuarioId: usuario.id
-                        }
-                    });
+                // Heuristic: Last 2 are names, Rest are surnames? Or First 2 surnames?
+                // Usually in lists: "Abad Montesdeoca Nicole Belen" -> Apellidos: Abad Montesdeoca
+                if (nameParts.length >= 3) {
+                    apellidos = nameParts.slice(0, 2).join(' ');
+                    nombres = nameParts.slice(2).join(' ');
+                } else if (nameParts.length === 2) {
+                    apellidos = nameParts[0];
+                    nombres = nameParts[1];
+                } else {
+                    apellidos = nameParts[0];
+                    nombres = 'Sin Nombre';
                 }
 
-                // 3. Create/Update Student Profile
-                // @ts-ignore
-                await tx.estudiantePerfil.upsert({
-                    where: { usuarioId: usuario.id },
-                    update: {
-                        sexo: row['Sexo'],
-                        estadoEscuela: row['Estado en Escuela'],
-                        sede: row['Sede'],
-                        escuela: row['Escuela'],
-                        codigoMalla: row['Código de Malla'],
-                        malla: row['Malla'],
-                        periodoLectivo: row['Período Lectivo'],
-                        ciudad: row['Ciudad'],
-                        provincia: row['Provincia'],
-                        pais: row['País']
-                    },
-                    create: {
+                const usuario = await tx.usuario.create({
+                    data: {
+                        cedula,
+                        nombres,
+                        apellidos,
+                        correoInstitucional: email,
+                        rol: 'ESTUDIANTE'
+                    }
+                });
+
+                // 2. Create Credentials in Auth
+                await tx.auth.create({
+                    data: {
+                        username: email,
+                        password: hashedPassword,
+                        usuarioId: usuario.id
+                    }
+                });
+
+                // 3. Create Student Profile
+                await tx.estudiantePerfil.create({
+                    data: {
                         sexo: row['Sexo'],
                         estadoEscuela: row['Estado en Escuela'],
                         sede: row['Sede'],
@@ -153,18 +168,27 @@ export const importarEstudiantes = async (request: FastifyRequest, reply: Fastif
                 return usuario;
             });
 
-            // Check if it was created or found
-            resultados.push({ cedula, email, status: 'Procesado' });
+            // If we reached here, user was created
+            resultados.creados.push({ cedula, email });
+
+            // Enviar correo con credenciales ONLY for created users
+            try {
+                await sendCredentialsEmail(email, nombreCompleto, plainPassword);
+            } catch (emailError) {
+                console.error(`Error enviando correo a ${email}`, emailError);
+            }
 
         } catch (error) {
             console.error('Error importing row:', error);
-            errores.push({ row, error: 'Error al guardar en BD: ' + (error as Error).message });
+            resultados.errores.push({ row, error: 'Error al guardar en BD: ' + (error as Error).message });
         }
     }
 
+    // Map to expected format for frontend
     return reply.send({
         message: 'Import processed',
-        creados: resultados,
-        errores
+        exitosos: resultados.creados, // Map 'creados' to 'exitosos' for compatibility
+        omitidos: resultados.omitidos,
+        fallidos: resultados.errores
     });
 };

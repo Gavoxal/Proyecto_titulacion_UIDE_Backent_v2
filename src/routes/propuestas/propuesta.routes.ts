@@ -121,26 +121,12 @@ export default async function (fastify: FastifyInstance, opts: any) {
         }
     }, servePropuestaFile);
 
-    // POST / (Crear - recibe JSON con archivoUrl)
     fastify.post('/', {
         schema: {
             tags: ['Propuestas'],
-            description: 'Crear nueva propuesta',
-            security: [{ bearerAuth: [] }],
-            body: {
-                type: 'object',
-                required: ['titulo'],
-                properties: {
-                    titulo: { type: 'string' },
-                    objetivos: { type: 'string' },
-                    areaConocimientoId: { type: 'integer' },
-                    archivoUrl: { type: 'string' },
-                    problematica: { type: 'string' },
-                    alcance: { type: 'string' },
-                    carrera: { type: 'string' },
-                    malla: { type: 'string' }
-                }
-            }
+            description: 'Crear nueva propuesta (Multipart)',
+            consumes: ['multipart/form-data'],
+            security: [{ bearerAuth: [] }]
         },
         preHandler: async (request: any, reply: any) => {
             const user = request.user;
@@ -246,7 +232,7 @@ export default async function (fastify: FastifyInstance, opts: any) {
                 type: 'object',
                 required: ['estadoRevision'],
                 properties: {
-                    estadoRevision: { type: 'string', enum: ['APROBADO', 'RECHAZADO', 'CORRECCION'] },
+                    estadoRevision: { type: 'string', enum: ['APROBADA', 'RECHAZADA', 'APROBADA_CON_COMENTARIOS'] },
                     comentariosRevision: { type: 'string' }
                 }
             }

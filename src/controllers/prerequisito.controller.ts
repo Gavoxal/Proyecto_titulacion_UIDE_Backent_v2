@@ -4,6 +4,8 @@ import path from 'path';
 import { pipeline } from 'stream';
 import util from 'util';
 import { fileURLToPath } from 'url';
+import { notifyDirector } from './notificacion.controller.js';
+
 
 const pump = util.promisify(pipeline);
 const __filename = fileURLToPath(import.meta.url);
@@ -56,9 +58,23 @@ export const createCatalogoPrerequisito = async (request: FastifyRequest, reply:
 export const createEstudiantePrerequisito = async (request: FastifyRequest, reply: FastifyReply) => {
     const prisma = request.server.prisma;
     const { prerequisitoId, archivoUrl } = request.body as any;
-    const usuario = request.user as any;
+    const userAuth = request.user as any;
 
     try {
+        // Fetch complete user info to get names
+        const usuario = await prisma.usuario.findUnique({
+            where: { id: userAuth.id }
+        });
+
+        if (!usuario) {
+            return reply.code(404).send({ message: 'Usuario no encontrado' });
+        }
+
+        // Obtener información del prerequisito del catálogo
+        const catalogoPrereq = await prisma.catalogoPrerequisito.findUnique({
+            where: { id: Number(prerequisitoId) }
+        });
+
         // Verificar si ya existe el registro:
         const existente = await prisma.estudiantePrerequisito.findUnique({
             where: {
@@ -69,9 +85,10 @@ export const createEstudiantePrerequisito = async (request: FastifyRequest, repl
             }
         });
 
+        let resultado;
         if (existente) {
             // Actualizar si ya existe
-            const actualizado = await prisma.estudiantePrerequisito.update({
+            resultado = await prisma.estudiantePrerequisito.update({
                 where: {
                     fkEstudiante_prerequisitoId: {
                         fkEstudiante: usuario.id,
@@ -80,14 +97,20 @@ export const createEstudiantePrerequisito = async (request: FastifyRequest, repl
                 },
                 data: {
                     archivoUrl: archivoUrl,
-                    cumplido: false, // Reset a false hasta que el director valide
-                    fechaActualizacion: new Date()
+                    cumplido: false // Reset a false hasta que el director valide
                 }
             });
-            return reply.code(200).send(actualizado);
+
+            // Notificar al director sobre la actualización
+            await notifyDirector(
+                prisma,
+                `${usuario.nombres} ${usuario.apellidos} ha actualizado el prerequisito: ${catalogoPrereq?.nombre || 'Prerequisito'}`
+            );
+
+            return reply.code(200).send(resultado);
         } else {
             // Crear uno nuevo si no existe
-            const nuevo = await prisma.estudiantePrerequisito.create({
+            resultado = await prisma.estudiantePrerequisito.create({
                 data: {
                     fkEstudiante: usuario.id,
                     prerequisitoId: Number(prerequisitoId),
@@ -95,7 +118,14 @@ export const createEstudiantePrerequisito = async (request: FastifyRequest, repl
                     cumplido: false
                 }
             });
-            return reply.code(201).send(nuevo);
+
+            // Notificar al director sobre el nuevo prerequisito
+            await notifyDirector(
+                prisma,
+                `${usuario.nombres} ${usuario.apellidos} ha enviado el prerequisito: ${catalogoPrereq?.nombre || 'Prerequisito'} para revisión`
+            );
+
+            return reply.code(201).send(resultado);
         }
     } catch (error) {
         request.log.error(error);
@@ -112,7 +142,8 @@ export const getEstudiantePrerequisitos = async (request: FastifyRequest, reply:
         let fkEstudiante = usuario.id;
 
         // Si es director/coordinador, puede ver de cualquier estudiante
-        if ((usuario.rol === 'DIRECTOR' || usuario.rol === 'COORDINADOR') && estudianteId) {
+        const userRole = usuario.rol ? usuario.rol.toUpperCase() : '';
+        if ((userRole === 'DIRECTOR' || userRole === 'COORDINADOR') && estudianteId) {
             fkEstudiante = Number(estudianteId);
         }
 
@@ -153,7 +184,7 @@ export const getEstudiantePrerequisitos = async (request: FastifyRequest, reply:
                 cumplido: envio ? envio.cumplido : false,
                 archivoUrl: envio ? envio.archivoUrl : null,
                 fechaCumplimiento: envio ? envio.fechaCumplimiento : null,
-                fechaActualizacion: envio ? envio.fechaActualizacion : null,
+                fechaActualizacion: envio ? (envio as any).fechaActualizacion : null,
                 observaciones: envio ? 'En revisión' : 'Pendiente'
             };
         });
@@ -164,6 +195,9 @@ export const getEstudiantePrerequisitos = async (request: FastifyRequest, reply:
         return reply.code(500).send({ message: 'Error obteniendo prerrequisitos' });
     }
 };
+
+// Importar email service
+import { sendPlatformAccessEmail } from '../services/email.service.js';
 
 export const validatePrerequisito = async (request: FastifyRequest, reply: FastifyReply) => {
     const prisma = request.server.prisma;
@@ -176,8 +210,45 @@ export const validatePrerequisito = async (request: FastifyRequest, reply: Fasti
             data: {
                 cumplido: Boolean(cumplido),
                 fechaCumplimiento: cumplido ? new Date() : null
-            }
+            },
+            include: { estudiante: true } // Incluir estudiante para obtener email
         });
+
+        // Verificar si completó TODOS los requisitos
+        if (cumplido) {
+            const estudianteId = prerequisitoActualizado.fkEstudiante;
+
+            // Contar cumplidos
+            const countCumplidos = await prisma.estudiantePrerequisito.count({
+                where: { fkEstudiante: estudianteId, cumplido: true }
+            });
+
+            // Contar totales activos
+            const countTotales = await prisma.catalogoPrerequisito.count({
+                where: { activo: true }
+            });
+
+            // Si cumplio todo, enviar correo y notificación
+            if (countCumplidos === countTotales && countTotales > 0) {
+                const est = prerequisitoActualizado.estudiante;
+
+                // 1. Enviar Correo
+                await sendPlatformAccessEmail(
+                    est.correoInstitucional,
+                    `${est.nombres} ${est.apellidos}`
+                );
+
+                // 2. Crear Notificación en App
+                await prisma.notificacion.create({
+                    data: {
+                        usuarioId: est.id,
+                        mensaje: '¡Felicidades! Se ha habilitado tu acceso a la plataforma de titulación.',
+                        leido: false
+                    }
+                });
+            }
+        }
+
         return prerequisitoActualizado;
     } catch (error) {
         request.log.error(error);
@@ -237,6 +308,11 @@ export const getPrerequisitosDashboard = async (request: FastifyRequest, reply: 
             }
         });
 
+        console.log(`[DEBUG] getPrerequisitosDashboard: Found ${estudiantes.length} students`);
+        if (estudiantes.length > 0) {
+            console.log(`[DEBUG] First student sample:`, estudiantes[0]);
+        }
+
         // 3. Transformar data para el dashboard
         const dataDashboard = estudiantes.map((estudiante: any) => {
             const cumplimientos = estudiante.prerequisitos || [];
@@ -247,6 +323,7 @@ export const getPrerequisitosDashboard = async (request: FastifyRequest, reply: 
                 return {
                     id: req.id,
                     nombre: req.nombre,
+                    estudiantePrerequisitoId: cumplimiento ? cumplimiento.id : null, // ID para validación
                     completed: !!cumplimiento, // Si existe registro
                     verified: cumplimiento ? cumplimiento.cumplido : false, // Si está validado
                     file: cumplimiento ? cumplimiento.archivoUrl : null,
@@ -371,4 +448,62 @@ export const servePrerequisitoFile = async (request: FastifyRequest, reply: Fast
 
     reply.header('Content-Type', contentType);
     return reply.send(stream);
+};
+
+// ============================================
+// Habilitar Acceso a Plataforma (Acción Explícita del Director)
+// ============================================
+
+export const enableStudentAccess = async (request: FastifyRequest, reply: FastifyReply) => {
+    const prisma = request.server.prisma;
+    const { studentId } = request.params as any;
+
+    try {
+        const est = await prisma.usuario.findUnique({
+            where: { id: Number(studentId) }
+        });
+
+        if (!est) {
+            return reply.code(404).send({ message: 'Estudiante no encontrado' });
+        }
+
+        // Validar que realmente tenga los requisitos (Opcional, pero recomendado por seguridad)
+        const countCumplidos = await prisma.estudiantePrerequisito.count({
+            where: { fkEstudiante: Number(studentId), cumplido: true }
+        });
+
+        const countTotales = await prisma.catalogoPrerequisito.count({
+            where: { activo: true }
+        });
+
+        if (countCumplidos < countTotales) {
+            return reply.code(400).send({
+                message: `El estudiante no ha cumplido todos los requisitos (${countCumplidos}/${countTotales})`
+            });
+        }
+
+        // 1. Enviar Correo
+        await sendPlatformAccessEmail(
+            est.correoInstitucional,
+            `${est.nombres} ${est.apellidos}`
+        );
+
+        // 2. Crear Notificación en App
+        await prisma.notificacion.create({
+            data: {
+                usuarioId: est.id,
+                mensaje: '¡Felicidades! Se ha habilitado tu acceso a la plataforma de titulación.',
+                leido: false
+            }
+        });
+
+        // 3. (Opcional) Si tuvieras un campo accessGranted en Usuario, aquí lo actualizarías
+        // await prisma.usuario.update({ where: { id: est.id }, data: { accessGranted: true } });
+
+        return reply.code(200).send({ message: 'Acceso habilitado correctamente' });
+
+    } catch (error) {
+        request.log.error(error);
+        return reply.code(500).send({ message: 'Error habilitando acceso al estudiante' });
+    }
 };

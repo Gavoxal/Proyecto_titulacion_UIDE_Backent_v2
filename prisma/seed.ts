@@ -9,43 +9,91 @@ async function main() {
     // Password hash
     const hashedPassword = await bcrypt.hash('password123', 10);
 
+    // Limpiar base de datos (Orden específico por FKs)
+    console.log('🗑️ Cleaning up database...');
+    try {
+        // Nivel 4 (Dependencias de Actividad/Propuesta profunda)
+        await prisma.comentario.deleteMany({});
+        await prisma.evidencia.deleteMany({});
+
+        // Nivel 3 (Dependencias de Propuesta)
+        await prisma.actividad.deleteMany({});
+        await prisma.trabajoTitulacion.deleteMany({});
+        await prisma.comite.deleteMany({});
+        await prisma.entregableFinal.deleteMany({});
+        await prisma.bitacoraReunion.deleteMany({});
+        await prisma.votacionTutor.deleteMany({});
+
+        // Nivel 2 (Propuesta y Prerequisitos)
+        await prisma.propuesta.deleteMany({});
+        await prisma.estudiantePrerequisito.deleteMany({});
+        await prisma.catalogoPrerequisito.deleteMany({});
+
+        // Nivel 1 (Usuarios y Perfiles)
+        await prisma.auth.deleteMany({});
+        await prisma.estudiantePerfil.deleteMany({});
+        await prisma.usuario.deleteMany({});
+        await prisma.areaConocimiento.deleteMany({});
+
+        console.log('✨ Database clean');
+    } catch (e) {
+        console.log('⚠️ Cleanup warning (ignore if empty):', e);
+    }
+
     // 1. ÁREAS DE CONOCIMIENTO
     console.log('📚 Creating Áreas de Conocimiento...');
-    const area1 = await prisma.areaConocimiento.create({
-        data: {
-            codigo: 'ING-SW',
-            nombre: 'Ingeniería de Software',
-            descripcion: 'Desarrollo de software'
-        }
-    });
 
-    const area2 = await prisma.areaConocimiento.create({
-        data: {
-            codigo: 'IA',
-            nombre: 'Inteligencia Artificial',
-            descripcion: 'Machine Learning'
-        }
-    });
+    // Lista actualizada de áreas
+    const areas = [
+        { codigo: 'DATA-IA', nombre: 'Ciencia de Datos e Inteligencia Artificial', descripcion: 'Ciencia de datos, IA y Machine Learning' },
+        { codigo: 'GESTION-DIGITAL', nombre: 'Gestión de la Información y Transformación Digital', descripcion: 'Gestión de TI y transformación digital' },
+        { codigo: 'INFRA-SEC', nombre: 'Infraestructura TI y Ciberseguridad', descripcion: 'Redes, infraestructura y seguridad informática' },
+        { codigo: 'INNOV-ETICA', nombre: 'Innovación, Emprendimiento y Ética Tecnológica', descripcion: 'Innovación tecnológica y ética' },
+        { codigo: 'DEV-SOFT', nombre: 'Programación y Desarrollo de Software', descripcion: 'Desarrollo de software y aplicaciones' },
+    ];
 
-    const area3 = await prisma.areaConocimiento.create({
-        data: {
-            codigo: 'REDES',
-            nombre: 'Redes',
-            descripcion: 'Redes e IoT'
-        }
-    });
-    console.log('✅ Created 3 áreas\n');
+    const createdAreas = [];
+    for (const area of areas) {
+        createdAreas.push(await prisma.areaConocimiento.create({ data: area }));
+    }
+    const areaId1 = createdAreas[0].id;
+    const areaId2 = createdAreas[1].id;
+    const areaId3 = createdAreas[2].id;
+
+    console.log(`✅ Created ${areas.length} áreas\n`);
 
     // 2. PRERREQUISITOS
     console.log('📋 Creating Prerrequisitos...');
 
-    // Limpiar tabla antes de crear (para evitar duplicados y errores de FK)
-    console.log('🗑️ Cleaning up old data...');
+    // Limpiar base de datos (Orden específico por FKs)
+    console.log('🗑️ Cleaning up database...');
     try {
+        // Nivel 4 (Dependencias de Actividad/Propuesta profunda)
+        await prisma.comentario.deleteMany({});
+        await prisma.evidencia.deleteMany({});
+
+        // Nivel 3 (Dependencias de Propuesta)
+        await prisma.actividad.deleteMany({});
+        await prisma.trabajoTitulacion.deleteMany({});
+        await prisma.comite.deleteMany({});
+        await prisma.entregableFinal.deleteMany({});
+        await prisma.bitacoraReunion.deleteMany({});
+        await prisma.votacionTutor.deleteMany({});
+
+        // Nivel 2 (Propuesta y Prerequisitos)
+        await prisma.propuesta.deleteMany({});
         await prisma.estudiantePrerequisito.deleteMany({});
         await prisma.catalogoPrerequisito.deleteMany({});
+
+        // Nivel 1 (Usuarios y Perfiles)
+        await prisma.auth.deleteMany({});
+        await prisma.estudiantePerfil.deleteMany({});
+        await prisma.usuario.deleteMany({});
+        await prisma.areaConocimiento.deleteMany({});
+
+        console.log('✨ Database clean');
     } catch (e) {
-        console.log('⚠️ Could not clean up tables (maybe they are empty or first run)');
+        console.log('⚠️ Cleanup warning (ignore if empty):', e);
     }
 
     const prereq1 = await prisma.catalogoPrerequisito.create({
@@ -219,6 +267,13 @@ async function main() {
                     username: 'estudiante1@uide.edu.ec',
                     password: hashedPassword
                 }
+            },
+            estudiantePerfil: {
+                create: {
+                    escuela: 'Ingeniería en Sistemas',
+                    malla: '2023',
+                    sede: 'Quito'
+                }
             }
         }
     });
@@ -235,56 +290,47 @@ async function main() {
                     username: 'estudiante2@uide.edu.ec',
                     password: hashedPassword
                 }
-            }
-        }
-    });
-
-    const estudiante3 = await prisma.usuario.create({
-        data: {
-            nombres: 'Diego',
-            apellidos: 'Torres',
-            cedula: '1234567800',
-            correoInstitucional: 'estudiante3@uide.edu.ec',
-            rol: 'ESTUDIANTE',
-            auth: {
+            },
+            estudiantePerfil: {
                 create: {
-                    username: 'estudiante3@uide.edu.ec',
-                    password: hashedPassword
+                    escuela: 'Ingeniería en Sistemas',
+                    malla: '2023',
+                    sede: 'Quito'
                 }
             }
         }
     });
 
-    console.log('✅ Created 12 users\n');
+    console.log('✅ Created 2 students with profiles\n');
+    console.log('✅ Created Admin/Director/Tutor users (Students creation skipped)\n');
 
     // 4. PRERREQUISITOS DE ESTUDIANTES
     console.log('✅ Creating Estudiante Prerrequisitos...');
-    for (const estudiante of [estudiante1, estudiante2, estudiante3]) {
+    for (const estudiante of [estudiante1, estudiante2]) {
         for (const prereq of [prereq1, prereq2, prereq3]) {
             await prisma.estudiantePrerequisito.create({
                 data: {
                     fkEstudiante: estudiante.id,
                     prerequisitoId: prereq.id,
-                    cumplido: true,
+                    cumplido: Math.random() > 0.5,
                     fechaCumplimiento: new Date()
                 }
             });
         }
     }
-    console.log('✅ All students have prerequisites\n');
+    console.log('✅ Students have prerequisites\n');
 
     // 5. PROPUESTAS
     console.log('📄 Creating Propuestas...');
     const propuesta1 = await prisma.propuesta.create({
         data: {
-            // titulo: 'Sistema de Gestión de Inventario con IA',
             titulo: 'Sistema Inventario IA',
             objetivos: 'Desarrollar sistema inteligente',
             problematica: 'Dificultad para predecir demanda',
             alcance: 'Sistema web',
             carrera: 'Ingeniería en Sistemas',
             malla: '2023',
-            areaConocimientoId: area2.id,
+            areaConocimientoId: areaId2,
             fkEstudiante: estudiante1.id,
             estado: 'APROBADA'
         }
@@ -298,27 +344,14 @@ async function main() {
             alcance: 'App móvil',
             carrera: 'Ingeniería en Sistemas',
             malla: '2023',
-            areaConocimientoId: area1.id,
+            areaConocimientoId: areaId1,
             fkEstudiante: estudiante2.id,
             estado: 'APROBADA'
         }
     });
 
-    const propuesta3 = await prisma.propuesta.create({
-        data: {
-            titulo: 'Sistema de Monitoreo con IoT',
-            objetivos: 'Implementar monitoreo',
-            problematica: 'Falta de visibilidad',
-            alcance: 'Dashboard web',
-            carrera: 'Ingeniería en Sistemas',
-            malla: '2023',
-            areaConocimientoId: area3.id,
-            fkEstudiante: estudiante3.id,
-            estado: 'PENDIENTE'
-        }
-    });
-
-    console.log('✅ Created 3 propuestas\n');
+    console.log('✅ Created 2 propuestas\n');
+    console.log('✅ Seed completed (Admin/Director/Tutor only)\n');
 
     // RESUMEN FINAL
     console.log('\n' + '='.repeat(60));

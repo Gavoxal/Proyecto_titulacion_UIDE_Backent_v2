@@ -1,0 +1,7 @@
+--- DIAGNOSTIC START ---
+Director User Found:
+ID: 23
+Name: María González
+Role: 'DIRECTOR'
+Dashboard Query (rol='ESTUDIANTE') found 1 users.
+--- DIAGNOSTIC END ---

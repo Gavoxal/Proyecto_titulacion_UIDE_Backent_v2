@@ -6,7 +6,8 @@ import {
     getPrerequisitosDashboard,
     uploadPrerequisitoFile,
     servePrerequisitoFile,
-    checkCanCreatePropuesta
+    checkCanCreatePropuesta,
+    enableStudentAccess
 } from '../../controllers/prerequisito.controller.js';
 import { FastifyInstance } from 'fastify';
 
@@ -23,7 +24,8 @@ export default async function (fastify: FastifyInstance, opts: any) {
         },
         preHandler: async (request: any, reply: any) => {
             const user = request.user;
-            if (user.rol !== 'ESTUDIANTE') {
+            const userRole = user.rol ? user.rol.toUpperCase() : '';
+            if (userRole !== 'ESTUDIANTE') {
                 return reply.code(403).send({ message: 'Solo estudiantes verifican su estado' });
             }
         }
@@ -55,16 +57,17 @@ export default async function (fastify: FastifyInstance, opts: any) {
             security: [{ bearerAuth: [] }],
             body: {
                 type: 'object',
-                required: ['prerequisitoId', 'archivoUrl'],
+                required: ['prerequisitoId'],
                 properties: {
                     prerequisitoId: { type: 'integer' },
-                    archivoUrl: { type: 'string' }
+                    archivoUrl: { type: ['string', 'null'] }
                 }
             }
         },
         preHandler: async (request: any, reply: any) => {
             const user = request.user;
-            if (user.rol !== 'ESTUDIANTE') {
+            const userRole = user.rol ? user.rol.toUpperCase() : '';
+            if (userRole !== 'ESTUDIANTE') {
                 return reply.code(403).send({ message: 'Solo estudiantes suben prerrequisitos' });
             }
         }
@@ -79,7 +82,11 @@ export default async function (fastify: FastifyInstance, opts: any) {
         },
         preHandler: async (request: any, reply: any) => {
             const user = request.user;
-            if (!['DIRECTOR', 'COORDINADOR'].includes(user.rol)) {
+            console.log(`[DEBUG] Dashboard preHandler. UserID: ${user?.id}, Rol: ${user?.rol}`);
+            const userRole = user.rol ? user.rol.toUpperCase() : '';
+            console.log(`[DEBUG] Checked Role: '${userRole}'`);
+            if (!['DIRECTOR', 'COORDINADOR'].includes(userRole)) {
+                console.log(`[DEBUG] Access DENIED for ${userRole}`);
                 return reply.code(403).send({ message: 'Acceso denegado' });
             }
         }
@@ -124,11 +131,32 @@ export default async function (fastify: FastifyInstance, opts: any) {
         },
         preHandler: async (request: any, reply: any) => {
             const user = request.user;
-            if (!['DIRECTOR', 'COORDINADOR'].includes(user.rol)) {
+            const userRole = user.rol ? user.rol.toUpperCase() : '';
+            if (!['DIRECTOR', 'COORDINADOR'].includes(userRole)) {
                 return reply.code(403).send({ message: 'No tienes permisos para validar' });
             }
         }
     }, validatePrerequisito);
+
+    // POST /:studentId/enable-access (Habilitar acceso - Director)
+    fastify.post('/:studentId/enable-access', {
+        schema: {
+            tags: ['Prerrequisitos'],
+            description: 'Habilitar acceso a plataforma (Email + Notificación)',
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: 'object',
+                properties: { studentId: { type: 'integer' } }
+            }
+        },
+        preHandler: async (request: any, reply: any) => {
+            const user = request.user;
+            const userRole = user.rol ? user.rol.toUpperCase() : '';
+            if (userRole !== 'DIRECTOR') {
+                return reply.code(403).send({ message: 'Solo el director puede habilitar acceso' });
+            }
+        }
+    }, enableStudentAccess);
 
     // DELETE /:id
     fastify.delete('/:id', {
