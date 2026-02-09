@@ -26,19 +26,17 @@ export const createEntregable = async (request: FastifyRequest, reply: FastifyRe
         for await (const part of parts) {
             if (part.type === 'file') {
                 if (part.fieldname === 'file') {
-                    // Basic validation - PDF/Word? Let's check generally or accept all for now
                     const timestamp = Date.now();
-                    const filename = `entregable_${timestamp}_${part.filename}`;
+                    const filename = `entregable_${timestamp}_${part.filename.replace(/\s/g, '_')}`;
                     const savePath = path.join(uploadDir, filename);
 
                     await pump(part.file, fs.createWriteStream(savePath));
                     archivoUrl = `/uploads/entregables/${filename}`;
                     fileProcessed = true;
                 } else {
-                    await part.toBuffer(); // Ignore other files
+                    await part.toBuffer();
                 }
             } else {
-                // Fields
                 if (part.fieldname === 'tipo') tipo = (part as any).value;
                 if (part.fieldname === 'propuestasId') propuestasId = (part as any).value;
             }
@@ -51,27 +49,19 @@ export const createEntregable = async (request: FastifyRequest, reply: FastifyRe
         const propId = Number(propuestasId);
 
         const result = await prisma.$transaction(async (tx) => {
-            // 1. Buscar si ya existe una versión activa de este tipo para esta propuesta
             const existingActive = await tx.entregableFinal.findFirst({
-                where: {
-                    propuestasId: propId,
-                    tipo: tipo,
-                    isActive: true
-                }
+                where: { propuestasId: propId, tipo: tipo, isActive: true }
             });
 
             let newVersion = 1;
-
             if (existingActive) {
                 newVersion = existingActive.version + 1;
-                // 2. Desactivar la versión anterior
                 await tx.entregableFinal.update({
                     where: { id: existingActive.id },
                     data: { isActive: false }
                 });
             }
 
-            // 3. Crear la nueva versión
             return await tx.entregableFinal.create({
                 data: {
                     tipo,
@@ -88,6 +78,33 @@ export const createEntregable = async (request: FastifyRequest, reply: FastifyRe
         request.log.error(error);
         return reply.code(500).send({ message: 'Error subiendo entregable final' });
     }
+};
+
+export const serveEntregableFile = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { filename } = request.params as any;
+    const path = await import('path');
+    const fs = await import('fs');
+
+    const uploadDir = path.join(process.cwd(), 'uploads', 'entregables');
+    const filePath = path.join(uploadDir, filename);
+
+    if (!filePath.startsWith(uploadDir)) {
+        return reply.code(403).send({ message: 'Acceso denegado' });
+    }
+
+    if (!fs.existsSync(filePath)) {
+        return reply.code(404).send({ message: 'Archivo no encontrado' });
+    }
+
+    const stream = fs.createReadStream(filePath);
+    const ext = path.extname(filename).toLowerCase();
+    let contentType = 'application/octet-stream';
+    if (ext === '.pdf') contentType = 'application/pdf';
+    else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+    else if (ext === '.png') contentType = 'image/png';
+
+    reply.header('Content-Type', contentType);
+    return reply.send(stream);
 };
 
 export const getEntregablesByPropuesta = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -130,5 +147,33 @@ export const updateEntregable = async (request: FastifyRequest, reply: FastifyRe
     } catch (error) {
         request.log.error(error);
         return reply.code(500).send({ message: 'Error actualizando entregable' });
+    }
+};
+export const getUnlockStatus = async (request: FastifyRequest, reply: FastifyReply) => {
+    const prisma = request.server.prisma;
+    const user = request.user as any;
+
+    try {
+        // Contar evidencias aprobadas del estudiante actual
+        // Relacion: Usuario -> Propuesta -> Actividad -> Evidencia
+        const approvedCount = await prisma.evidencia.count({
+            where: {
+                estadoRevisionTutor: 'APROBADO',
+                actividad: {
+                    propuesta: {
+                        fkEstudiante: user.id
+                    }
+                }
+            }
+        });
+
+        return {
+            unlocked: approvedCount >= 16,
+            approvedWeeks: approvedCount,
+            requiredWeeks: 16
+        };
+    } catch (error) {
+        request.log.error(error);
+        return reply.code(500).send({ message: 'Error consultando estado de desbloqueo' });
     }
 };

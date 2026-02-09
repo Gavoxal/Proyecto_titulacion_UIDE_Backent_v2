@@ -77,6 +77,17 @@ export const createActividad = async (request: FastifyRequest, reply: FastifyRep
     } = request.body as any;
 
     try {
+        // Validación: Límite de 16 semanas/actividades por propuesta
+        const count = await prisma.actividad.count({
+            where: { propuestaId: Number(propuestaId) }
+        });
+
+        if (count >= 16) {
+            return reply.code(400).send({
+                message: 'Límite alcanzado: No puedes crear más de 16 actividades para esta propuesta.'
+            });
+        }
+
         const nuevaActividad = await prisma.actividad.create({
             data: {
                 nombre,
@@ -100,29 +111,30 @@ export const createActividad = async (request: FastifyRequest, reply: FastifyRep
 export const getActividadesByPropuesta = async (request: FastifyRequest, reply: FastifyReply) => {
     const prisma = request.server.prisma;
     const { propuestaId } = request.params as any;
-    const { tipo } = request.query as any;
+    // const { tipo } = request.query as any; // Removed as per instruction
 
     try {
-        const where: any = { propuestaId: Number(propuestaId) };
-        if (tipo) {
-            where.tipo = tipo; // Filter by tipo if provided
-        }
+        // const where: any = { propuestaId: Number(propuestaId) }; // Modified as per instruction
+        // if (tipo) { // Modified as per instruction
+        //     where.tipo = tipo; // Filter by tipo if provided // Modified as per instruction
+        // } // Modified as per instruction
 
         const actividades = await prisma.actividad.findMany({
-            where,
+            where: { propuestaId: Number(propuestaId) },
             include: {
                 evidencias: true,
                 propuesta: {
                     include: {
                         trabajosTitulacion: {
                             include: {
-                                tutor: {
-                                    select: { nombres: true, apellidos: true }
-                                }
+                                tutor: true
                             }
                         }
                     }
                 }
+            },
+            orderBy: {
+                id: 'asc'
             }
         });
         return actividades;
@@ -142,9 +154,7 @@ export const getActividadById = async (request: FastifyRequest, reply: FastifyRe
             include: { evidencias: true }
         });
 
-        if (!actividad) {
-            return reply.code(404).send({ message: 'Actividad no encontrada' });
-        }
+        if (!actividad) return reply.code(404).send({ message: 'Actividad no encontrada' });
         return actividad;
     } catch (error) {
         request.log.error(error);
@@ -155,12 +165,17 @@ export const getActividadById = async (request: FastifyRequest, reply: FastifyRe
 export const updateActividad = async (request: FastifyRequest, reply: FastifyReply) => {
     const prisma = request.server.prisma;
     const { id } = request.params as any;
-    const data = request.body as any;
+    const { nombre, descripcion, estado, fechaEntrega } = request.body as any;
 
     try {
         const actividadActualizada = await prisma.actividad.update({
             where: { id: Number(id) },
-            data
+            data: {
+                nombre,
+                descripcion,
+                estado,
+                fechaEntrega: fechaEntrega ? new Date(fechaEntrega) : undefined
+            }
         });
         return actividadActualizada;
     } catch (error) {
@@ -194,6 +209,13 @@ export const createEvidencia = async (request: FastifyRequest, reply: FastifyRep
     const usuario = request.user as any;
 
     try {
+        // Validación: No permitir semanas superiores a 16
+        if (Number(semana) > 16) {
+            return reply.code(400).send({
+                message: 'Límite alcanzado: No se pueden registrar evidencias para más de 16 semanas.'
+            });
+        }
+
         const nuevaEvidencia = await prisma.evidencia.create({
             data: {
                 semana: Number(semana),

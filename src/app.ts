@@ -6,6 +6,13 @@ import fastifySwaggerUi from '@fastify/swagger-ui';
 import multipart from '@fastify/multipart';
 import { PrismaClient } from '@prisma/client';
 
+import fastifyStatic from '@fastify/static';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 dotenv.config();
 
 // Fix for TypeScript type definition augmentation if needed
@@ -34,6 +41,12 @@ await app.register(multipart, {
     limits: {
         fileSize: 50 * 1024 * 1024 // 50MB
     }
+});
+
+// Static Files
+await app.register(fastifyStatic, {
+    root: path.join(__dirname, '../uploads'),
+    prefix: '/uploads/',
 });
 
 // Swagger
