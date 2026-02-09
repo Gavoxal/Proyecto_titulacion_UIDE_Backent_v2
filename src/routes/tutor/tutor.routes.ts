@@ -1,4 +1,4 @@
-import { getMisEstudiantes } from '../../controllers/tutor.controller.js';
+import { getMisEstudiantes, getTutorProfile, updateTutorProfile } from '../../controllers/tutor.controller.js';
 import { FastifyInstance } from 'fastify';
 
 export default async function (fastify: FastifyInstance, opts: any) {
@@ -29,4 +29,33 @@ export default async function (fastify: FastifyInstance, opts: any) {
             security: [{ bearerAuth: [] }]
         }
     }, getMisEstudiantes);
+
+    // GET /perfil
+    fastify.get('/perfil', {
+        schema: {
+            tags: ['Tutor'],
+            description: 'Obtener perfil del tutor',
+            security: [{ bearerAuth: [] }]
+        }
+    }, getTutorProfile);
+
+    // PUT /perfil
+    fastify.put('/perfil', {
+        schema: {
+            tags: ['Tutor'],
+            description: 'Actualizar perfil del tutor',
+            security: [{ bearerAuth: [] }],
+            body: {
+                type: 'object',
+                properties: {
+                    titulo: { type: 'string' },
+                    telefono: { type: 'string' },
+                    celular: { type: 'string' },
+                    sede: { type: 'string' },
+                    departamento: { type: 'string' },
+                    especialidad: { type: 'string' },
+                }
+            }
+        }
+    }, updateTutorProfile);
 }

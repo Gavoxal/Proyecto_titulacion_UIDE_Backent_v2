@@ -31,7 +31,16 @@ export default async function (fastify: FastifyInstance, opts: any) {
                 properties: {
                     nombres: { type: 'string' },
                     apellidos: { type: 'string' },
-                    cedula: { type: 'string' }
+                    cedula: { type: 'string' },
+                    correoInstitucional: { type: 'string' },
+                    estudiantePerfil: {
+                        type: 'object',
+                        nullable: true,
+                        properties: {
+                            escuela: { type: 'string' },
+                            carrera: { type: 'string' }
+                        }
+                    }
                 }
             },
             areaConocimiento: {
@@ -53,6 +62,24 @@ export default async function (fastify: FastifyInstance, opts: any) {
                                 nombres: { type: 'string' },
                                 apellidos: { type: 'string' },
                                 correoInstitucional: { type: 'string' }
+                            }
+                        }
+                    }
+                }
+            },
+            comentarios: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'integer' },
+                        descripcion: { type: 'string' },
+                        usuario: {
+                            type: 'object',
+                            properties: {
+                                nombres: { type: 'string' },
+                                apellidos: { type: 'string' },
+                                rol: { type: 'string' }
                             }
                         }
                     }
@@ -178,7 +205,7 @@ export default async function (fastify: FastifyInstance, opts: any) {
             params: {
                 type: 'object',
                 properties: { id: { type: 'integer' } }
-            }
+            },
         },
         preHandler: async (request: any, reply: any) => {
             const user = request.user;

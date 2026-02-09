@@ -4,7 +4,6 @@ import path from 'path';
 import { pipeline } from 'stream';
 import util from 'util';
 import { fileURLToPath } from 'url';
-
 const pump = util.promisify(pipeline);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -158,15 +157,12 @@ export const getPropuestas = async (request: FastifyRequest, reply: FastifyReply
         let where: any = {};
 
         // Use all-caps directly as defined in Rol enum
+        // Limit Students to their own proposals, but allow staff (TUTOR, DIRECTOR, etc.) to see ALL.
         if (usuario.rol === 'ESTUDIANTE') {
             where = { fkEstudiante: Number(usuario.id) };
-        } else if (usuario.rol === 'TUTOR') {
-            where = {
-                trabajosTitulacion: {
-                    some: { fkTutorId: Number(usuario.id) }
-                }
-            };
         }
+        // For TUTOR, DIRECTOR, COORDINADOR, DOCENTE_INTEGRACION: Do NOT filter by assignment.
+        // They should see all proposals to provide feedback (Forum style).
 
         // Permitir filtrar por estudianteId si es DIRECTOR o COORDINADOR
         const { estudianteId } = request.query as any;
@@ -236,6 +232,13 @@ export const getPropuestas = async (request: FastifyRequest, reply: FastifyReply
                 entregablesFinales: true
             }
         });
+
+        if (propuestas.length > 0) {
+            console.log(`[DEBUG] First proposal student data:`, JSON.stringify(propuestas[0].estudiante, null, 2));
+        }
+
+        console.log(`[DEBUG] Propuestas found: ${propuestas.length}`);
+        return propuestas;
         console.log(`[DEBUG] Propuestas found: ${propuestas.length}`);
         return propuestas;
     } catch (error: any) {
@@ -263,7 +266,13 @@ export const getPropuestaById = async (request: FastifyRequest, reply: FastifyRe
             where: { id: propostaId },
             include: {
                 estudiante: {
-                    select: { nombres: true, apellidos: true, cedula: true }
+                    select: {
+                        nombres: true,
+                        apellidos: true,
+                        cedula: true,
+                        correoInstitucional: true,
+                        estudiantePerfil: true
+                    }
                 },
                 areaConocimiento: true,
                 actividades: {
@@ -275,6 +284,14 @@ export const getPropuestaById = async (request: FastifyRequest, reply: FastifyRe
                     include: {
                         tutor: true
                     }
+                },
+                comentarios: {
+                    include: {
+                        usuario: {
+                            select: { nombres: true, apellidos: true, rol: true }
+                        }
+                    },
+                    orderBy: { id: 'asc' }
                 }
             }
         });
@@ -380,15 +397,18 @@ export const revisarPropuesta = async (request: FastifyRequest, reply: FastifyRe
 
     try {
         const propId = Number(id);
-        // Verificar que sea DIRECTOR o COORDINADOR
-        if (!['DIRECTOR', 'COORDINADOR'].includes(usuario.rol)) {
-            return reply.code(403).send({ message: 'Solo directores y coordinadores pueden revisar propuestas' });
+        // Verificar que sea DIRECTOR, COORDINADOR o TUTOR
+        if (!['DIRECTOR', 'COORDINADOR', 'TUTOR'].includes(usuario.rol)) {
+            return reply.code(403).send({ message: 'No tienes permisos para revisar propuestas' });
         }
+
+        let currentProp = null;
 
         if (estadoRevision === 'APROBADA') {
             // Obtener la propuesta para saber a qué estudiante pertenece
-            const currentProp = await prisma.propuesta.findUnique({
-                where: { id: propId }
+            currentProp = await prisma.propuesta.findUnique({
+                where: { id: propId },
+                include: { estudiante: true }
             });
             if (!currentProp) return reply.code(404).send({ message: 'Propuesta no encontrada' });
 
@@ -404,6 +424,25 @@ export const revisarPropuesta = async (request: FastifyRequest, reply: FastifyRe
             if (approvedExists) {
                 return reply.code(409).send({ message: 'El estudiante ya tiene una propuesta aprobada. No se puede aprobar otra.' });
             }
+        } else {
+            // Fetch proposal just for email notification if not APROBADA logic
+            currentProp = await prisma.propuesta.findUnique({
+                where: { id: propId },
+                include: { estudiante: true }
+            });
+            if (!currentProp) return reply.code(404).send({ message: 'Propuesta no encontrada' });
+        }
+
+
+        // Save comment in Comentarios table if provided
+        if (comentariosRevision) {
+            await prisma.comentario.create({
+                data: {
+                    propuestaId: propId,
+                    usuarioId: usuario.id,
+                    descripcion: comentariosRevision
+                }
+            });
         }
 
         const propuestaActualizada = await prisma.propuesta.update({

@@ -1,4 +1,5 @@
 import {
+    getAllReuniones,
     createReunion,
     getReunionById,
     getReunionesByTutor,
@@ -13,6 +14,15 @@ export default async function (fastify: FastifyInstance, opts: any) {
 
     fastify.addHook('onRequest', fastify.authenticate);
 
+    // GET / (Obtener todas las reuniones - Contextual al usuario)
+    fastify.get('/', {
+        schema: {
+            tags: ['Bitácora de Reuniones'],
+            description: 'Obtener reuniones (Contextual al rol del usuario)',
+            security: [{ bearerAuth: [] }]
+        }
+    }, getAllReuniones);
+
     // POST / (Crear reunión)
     fastify.post('/', {
         schema: {
@@ -21,7 +31,7 @@ export default async function (fastify: FastifyInstance, opts: any) {
             security: [{ bearerAuth: [] }],
             body: {
                 type: 'object',
-                required: ['estudianteId', 'propuestaId', 'fecha', 'horaInicio', 'horaFin', 'modalidad', 'resumen'],
+                required: ['estudianteId', 'propuestaId', 'fecha', 'horaInicio', 'horaFin', 'modalidad', 'motivo'],
                 properties: {
                     estudianteId: { type: 'integer' },
                     propuestaId: { type: 'integer' },
@@ -29,6 +39,7 @@ export default async function (fastify: FastifyInstance, opts: any) {
                     horaInicio: { type: 'string', pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$' },
                     horaFin: { type: 'string', pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$' },
                     modalidad: { type: 'string', enum: ['PRESENCIAL', 'VIRTUAL', 'HIBRIDA'] },
+                    motivo: { type: 'string' },
                     resumen: { type: 'string' },
                     compromisos: { type: 'array', items: { type: 'string' } },
                     asistio: { type: 'boolean' }
@@ -106,6 +117,7 @@ export default async function (fastify: FastifyInstance, opts: any) {
                     horaInicio: { type: 'string' },
                     horaFin: { type: 'string' },
                     modalidad: { type: 'string', enum: ['PRESENCIAL', 'VIRTUAL', 'HIBRIDA'] },
+                    motivo: { type: 'string' },
                     resumen: { type: 'string' },
                     compromisos: { type: 'array', items: { type: 'string' } },
                     asistio: { type: 'boolean' }

@@ -45,11 +45,10 @@ export default async function (fastify: FastifyInstance, opts: any) {
         },
         preHandler: async (request: any, reply: any) => {
             const user = request.user;
-            const allowed = ['TUTOR', 'DIRECTOR', 'DOCENTE_INTEGRACION', 'COMITE', 'PRESIDENTE', 'JURADO_1', 'JURADO_2'];
-            // Estudiantes NO comentan segun la logica usual (reciben feedback), aunque a veces pueden responder.
-            // Asumire por ahora que es feedback de docentes.
+            const allowed = ['ESTUDIANTE', 'TUTOR', 'DIRECTOR', 'DOCENTE_INTEGRACION', 'COMITE', 'PRESIDENTE', 'JURADO_1', 'JURADO_2'];
+            // Permitir que estudiantes también participen en el hilo de discusión
             if (!allowed.includes(user.rol)) {
-                return reply.code(403).send({ message: 'Solo los docentes pueden iniciar comentarios' });
+                return reply.code(403).send({ message: 'Solo los roles autorizados pueden comentar' });
             }
         }
     }, createComentario);

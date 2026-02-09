@@ -30,6 +30,7 @@ model Usuario {
   comites          Comite[]
   prerequisitos    EstudiantePrerequisito[]
   estudiantePerfil EstudiantePerfil?
+  tutorPerfil      TutorPerfil?
 
   // Nuevas relaciones
   reunionesComoTutor            BitacoraReunion[]            @relation("TutorReuniones")
@@ -404,6 +405,24 @@ model EstudiantePerfil {
 }
 
 // ============================================
+// 13. TUTOR PERFIL (NUEVO)
+// ============================================
+
+model TutorPerfil {
+  id             Int     @id @default(autoincrement())
+  titulo         String? @db.VarChar(100)
+  celular        String? @db.VarChar(20)
+  sede           String? @db.VarChar(100)
+  departamento   String? @db.VarChar(100)
+  especialidad   String? @db.VarChar(100)
+  usuarioId      Int     @unique @map("usuario_id")
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@map("tutor_perfil")
+}
+
+// ============================================
 // 13. MCP AUTHENTICATION
 // ============================================
 
@@ -435,9 +454,10 @@ model BitacoraReunion {
   horaFin    DateTime         @map("hora_fin") @db.Time(0)
   modalidad  ModalidadReunion
 
-  resumen     String  @db.Text
-  compromisos Json // Array de strings con compromisos
-  asistio     Boolean @default(true)
+  motivo      String          @db.VarChar(191) // Motivo de la reunión (Planificación)
+  resumen     String?         @db.Text         // Resumen/Acta (Post-reunión)
+  compromisos Json?           // Array de strings con compromisos
+  asistio     Boolean         @default(false)
 
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
@@ -455,6 +475,7 @@ model BitacoraReunion {
 enum ModalidadReunion {
   PRESENCIAL
   VIRTUAL
+  HIBRIDA
 }
 
 // ============================================

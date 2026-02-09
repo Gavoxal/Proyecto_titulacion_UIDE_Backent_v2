@@ -14,6 +14,52 @@ const checkRole = (user: any, allowedRoles: string[]) => {
 };
 
 /**
+ * Obtener todas las reuniones (Despachador basado en rol)
+ * - TUTOR: Sus reuniones como tutor
+ * - ESTUDIANTE: Sus reuniones como estudiante
+ * - DIRECTOR/COORDINADOR: Todas las reuniones
+ */
+export const getAllReuniones = async (request: FastifyRequest, reply: FastifyReply) => {
+    const prisma = request.server.prisma;
+    const user = request.user as any;
+
+    try {
+        if (checkRole(user, ['TUTOR'])) {
+            // Delegar a getReunionesByTutor
+            // Hack: Modificamos params para simular la petición
+            (request.params as any).tutorId = user.id;
+            return getReunionesByTutor(request, reply);
+        } else if (checkRole(user, ['ESTUDIANTE'])) {
+            // Delegar a getReunionesByEstudiante
+            (request.params as any).estudianteId = user.id;
+            return getReunionesByEstudiante(request, reply);
+        } else if (checkRole(user, ['DIRECTOR', 'COORDINADOR'])) {
+            // Obtener todas
+            const reuniones = await prisma.bitacoraReunion.findMany({
+                include: {
+                    tutor: {
+                        select: { id: true, nombres: true, apellidos: true }
+                    },
+                    estudiante: {
+                        select: { id: true, nombres: true, apellidos: true }
+                    },
+                    propuesta: {
+                        select: { id: true, titulo: true }
+                    }
+                },
+                orderBy: { fecha: 'desc' }
+            });
+            return reuniones;
+        } else {
+            return reply.code(403).send({ message: 'No tiene permiso para ver reuniones' });
+        }
+    } catch (error) {
+        request.log.error(error);
+        return reply.code(500).send({ message: 'Error obteniendo reuniones' });
+    }
+};
+
+/**
  * Crear nueva reunión
  * Acceso: TUTOR
  */
@@ -27,6 +73,7 @@ export const createReunion = async (request: FastifyRequest, reply: FastifyReply
         horaInicio,
         horaFin,
         modalidad,
+        motivo,
         resumen,
         compromisos,
         asistio
@@ -47,9 +94,10 @@ export const createReunion = async (request: FastifyRequest, reply: FastifyReply
                 horaInicio: new Date(`1970-01-01T${horaInicio}`),
                 horaFin: new Date(`1970-01-01T${horaFin}`),
                 modalidad,
+                motivo,
                 resumen,
                 compromisos: compromisos || [],
-                asistio: asistio !== undefined ? asistio : true
+                asistio: asistio !== undefined ? asistio : false
             },
             include: {
                 tutor: {
@@ -289,6 +337,7 @@ export const updateReunion = async (request: FastifyRequest, reply: FastifyReply
         if (data.horaInicio) updateData.horaInicio = new Date(`1970-01-01T${data.horaInicio}`);
         if (data.horaFin) updateData.horaFin = new Date(`1970-01-01T${data.horaFin}`);
         if (data.modalidad) updateData.modalidad = data.modalidad;
+        if (data.motivo) updateData.motivo = data.motivo;
         if (data.resumen) updateData.resumen = data.resumen;
         if (data.compromisos) updateData.compromisos = data.compromisos;
         if (data.asistio !== undefined) updateData.asistio = data.asistio;

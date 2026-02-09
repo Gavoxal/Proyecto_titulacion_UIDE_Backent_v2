@@ -1,7 +1,9 @@
 import {
     createEntregable,
     getEntregablesByPropuesta,
-    updateEntregable
+    updateEntregable,
+    getUnlockStatus,
+    serveEntregableFile
 } from '../../controllers/entregable.controller.js';
 import { FastifyInstance } from 'fastify';
 
@@ -20,6 +22,25 @@ export default async function (fastify: FastifyInstance, opts: any) {
             isActive: { type: 'boolean' }
         }
     };
+
+    // GET /unlock-status
+    fastify.get('/unlock-status', {
+        schema: {
+            tags: ['Entregables Finales'],
+            description: 'Verificar si el estudiante tiene 16 semanas aprobadas para desbloquear esta sección',
+            security: [{ bearerAuth: [] }],
+            response: {
+                200: {
+                    type: 'object',
+                    properties: {
+                        unlocked: { type: 'boolean' },
+                        approvedWeeks: { type: 'integer' },
+                        requiredWeeks: { type: 'integer' }
+                    }
+                }
+            }
+        }
+    }, getUnlockStatus);
 
     // POST / (Subir Entregable)
     fastify.post('/', {
@@ -88,5 +109,17 @@ export default async function (fastify: FastifyInstance, opts: any) {
             }
         }
     }, updateEntregable);
+
+    // GET /file/:filename (Servir archivos de entregables)
+    fastify.get('/file/:filename', {
+        schema: {
+            tags: ['Entregables Finales'],
+            description: 'Descargar archivo de entregable final',
+            params: {
+                type: 'object',
+                properties: { filename: { type: 'string' } }
+            }
+        }
+    }, serveEntregableFile);
 
 }
